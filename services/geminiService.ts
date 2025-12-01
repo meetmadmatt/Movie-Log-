@@ -1,112 +1,147 @@
-import { GoogleGenAI } from "@google/genai";
 import { SearchResult } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Hardcoded Key provided by user for reliability
+const DEFAULT_API_KEY = "4c7701a91cf42adf693c5cd614951311";
+
+const getApiKey = () => {
+  // 1. Check environment variable (Build time injection)
+  try {
+    // @ts-ignore
+    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+      // @ts-ignore
+      return process.env.API_KEY;
+    }
+  } catch (e) {
+    // Ignore reference errors
+  }
+
+  // 2. Check Local Storage (Runtime)
+  if (typeof window !== 'undefined') {
+    const localKey = localStorage.getItem('tmdb_api_key');
+    if (localKey) return localKey;
+  }
+
+  // 3. Fallback to hardcoded key
+  return DEFAULT_API_KEY;
+};
+
+const BASE_URL = "https://api.themoviedb.org/3";
+const IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500";
+
+// Helper to fetch data
+const fetchTMDB = async (endpoint: string, params: Record<string, string> = {}) => {
+  const apiKey = getApiKey();
+  
+  const url = new URL(`${BASE_URL}${endpoint}`);
+  url.searchParams.append("api_key", apiKey);
+  url.searchParams.append("language", "zh-TW"); // Force Traditional Chinese
+  
+  Object.keys(params).forEach(key => {
+    if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
+      url.searchParams.append(key, params[key]);
+    }
+  });
+
+  const res = await fetch(url.toString());
+  
+  if (!res.ok) {
+    const errorBody = await res.text();
+    console.error(`TMDB API Error (${res.status}):`, errorBody);
+    throw new Error(`TMDB API Error: ${res.status} ${res.statusText}`);
+  }
+  
+  return res.json();
+};
 
 export const searchMovieInfo = async (query: string): Promise<SearchResult[]> => {
+  if (!query || !query.trim()) return [];
+
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `Search for movie details for: "${query}". 
-      Find up to 3 likely matches.
-      For each match, extract the following details:
-      - originalTitle: The original title of the movie (e.g., in English or its native language).
-      - chineseTitle: The Traditional Chinese (Taiwan) translation of the title.
-      - year: Release year.
-      - director: Director's name.
-      - actors: Main cast (comma separated).
-      - plot: A brief plot summary in Traditional Chinese (zh-TW).
-      - posterUrl: A direct URL to a high-quality movie poster image file (jpg/png) found on the web. Prefer official posters from reputable sources like IMDb, Wikipedia, or Amazon.
-      
-      Output the result as a JSON array of objects.
-      Wrap the JSON in \`\`\`json code blocks.
-      Each object must have keys: originalTitle, chineseTitle, year, director, actors, plot, posterUrl.
-      `,
-      config: {
-        tools: [{ googleSearch: {} }],
-      },
-    });
+    // 1. Search for movies
+    const searchData = await fetchTMDB("/search/movie", { query: query.trim(), include_adult: "false" });
+    
+    if (!searchData.results) return [];
+    
+    const results = searchData.results.slice(0, 4); // Take top 4
 
-    const text = response.text || "";
-    
-    let rawResults: any[] = [];
-    
-    // Regex to extract JSON block
-    const jsonBlock = text.match(/```json\n([\s\S]*?)\n```/);
-    if (jsonBlock && jsonBlock[1]) {
-      rawResults = JSON.parse(jsonBlock[1]);
-    } else {
-      // Fallback regex for loose markdown
-      const looseJson = text.match(/```([\s\S]*?)```/);
-      if (looseJson && looseJson[1]) {
+    // 2. Fetch details (Director/Cast) for each result in parallel
+    const detailedResults = await Promise.all(
+      results.map(async (movie: any) => {
         try {
-            rawResults = JSON.parse(looseJson[1]);
-        } catch (e) {
-            console.warn("Failed to parse loose JSON block in searchMovieInfo");
-        }
-      } else if (text.trim().startsWith('[') && text.trim().endsWith(']')) {
-         // Attempt to parse raw text if it looks like JSON
-         try {
-            rawResults = JSON.parse(text);
-         } catch(e) {}
-      }
-    }
+          // Fetch credits (cast/crew)
+          const creditsData = await fetchTMDB(`/movie/${movie.id}/credits`);
+          
+          // Find Director
+          const director = creditsData.crew.find((p: any) => p.job === "Director")?.name || "Unknown";
+          
+          // Find Top 3 Actors
+          const actors = creditsData.cast
+            .slice(0, 3)
+            .map((p: any) => p.name)
+            .join(", ");
 
-    // Map raw results to SearchResult interface with formatted title
-    return rawResults.map((item) => ({
-      title: `${item.originalTitle} (${item.chineseTitle})`,
-      year: item.year,
-      director: item.director,
-      actors: item.actors,
-      plot: item.plot,
-      posterUrl: item.posterUrl
-    }));
+          // Format Title: "Original Title (Chinese Title)"
+          // If they are the same, just show one.
+          const displayTitle = movie.original_title === movie.title 
+            ? movie.title 
+            : `${movie.original_title} (${movie.title})`;
+
+          return {
+            title: displayTitle,
+            year: movie.release_date ? movie.release_date.split("-")[0] : "N/A",
+            director: director,
+            actors: actors,
+            plot: movie.overview || "暫無劇情簡介",
+            posterUrl: movie.poster_path 
+              ? `${IMAGE_BASE_URL}${movie.poster_path}` 
+              : `https://placehold.co/400x600/1a1a1a/666?text=No+Poster`,
+            tmdbId: movie.id // internal use
+          };
+        } catch (innerError) {
+          console.warn(`Failed to fetch details for movie ID ${movie.id}`, innerError);
+          return null;
+        }
+      })
+    );
+
+    return detailedResults.filter((m): m is SearchResult => m !== null);
 
   } catch (error) {
-    console.error("Error fetching movie info:", error);
+    console.error("TMDB Search Error:", error);
     return [];
   }
 };
 
 export const suggestAlternativePosters = async (movieTitle: string): Promise<string[]> => {
   try {
-    const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: `Find 4 distinct, high-quality, vertical poster image URLs for the movie "${movieTitle}".
-        Return ONLY a JSON array of strings (URLs). 
-        Example: ["https://example.com/poster1.jpg", "https://example.com/poster2.jpg"]
-        Wrap in \`\`\`json.
-        `,
-        config: {
-            tools: [{ googleSearch: {} }],
-        },
-    });
+    // 1. Clean up title for search (Remove Chinese parts in parentheses for better matching if needed, or search full)
+    // Example: "Interstellar (星際效應)" -> "Interstellar"
+    let cleanQuery = movieTitle.split('(')[0].trim();
+    if (!cleanQuery) cleanQuery = movieTitle; // Fallback if split results in empty
+
+    // 2. Quick search to get ID
+    const searchData = await fetchTMDB("/search/movie", { query: cleanQuery });
     
-    const text = response.text || "";
-    
-    const jsonBlock = text.match(/```json\n([\s\S]*?)\n```/);
-    if (jsonBlock && jsonBlock[1]) {
-        return JSON.parse(jsonBlock[1]);
+    if (!searchData.results || searchData.results.length === 0) {
+      console.warn("No movie found for poster search:", cleanQuery);
+      return [];
     }
     
-    const looseJson = text.match(/```([\s\S]*?)```/);
-    if (looseJson && looseJson[1]) {
-       try {
-        return JSON.parse(looseJson[1]);
-       } catch (e) {}
-    }
-     
-    if (text.trim().startsWith('[') && text.trim().endsWith(']')) {
-        return JSON.parse(text);
-    }
+    const movieId = searchData.results[0].id;
+
+    // 3. Get Images (Posters)
+    // include_image_language: 'en,null,zh' to get various posters
+    const imagesData = await fetchTMDB(`/movie/${movieId}/images`, { include_image_language: "en,zh,null" });
     
+    if (!imagesData.posters) return [];
+
+    // Return top 8 posters
+    return imagesData.posters
+      .slice(0, 8)
+      .map((img: any) => `${IMAGE_BASE_URL}${img.file_path}`);
+
+  } catch (error) {
+    console.error("TMDB Poster Error:", error);
     return [];
-  } catch (e) {
-      console.error("Error fetching alternative posters:", e);
-      // Fallback to placeholders if search fails
-      const styles = ['000000', '10B981', '1a1a1a', '064E3B'];
-      return styles.map(bg => 
-        `https://placehold.co/400x600/${bg}/fff?text=${encodeURIComponent(movieTitle)}`
-      );
   }
 };
