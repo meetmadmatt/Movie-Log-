@@ -90,6 +90,9 @@ export default function App() {
   const [isSearching, setIsSearching] = useState(false);
   const [selectedMovieToAdd, setSelectedMovieToAdd] = useState<SearchResult | null>(null);
   
+  // State to track if we are promoting a queue item
+  const [queueItemToPromote, setQueueItemToPromote] = useState<string | null>(null);
+  
   // Modal State for Viewing Details
   const [viewingMovie, setViewingMovie] = useState<Movie | null>(null);
   const [viewingMoviePosters, setViewingMoviePosters] = useState<string[]>([]); // For edit poster
@@ -115,6 +118,25 @@ export default function App() {
         downvotes: type === 'down' ? item.downvotes + 1 : item.downvotes
       };
     }).sort((a, b) => (b.upvotes - b.downvotes) - (a.upvotes - a.downvotes)));
+  };
+
+  // Handle Promote from Queue
+  const handlePromoteFromQueue = (item: QueueItem) => {
+    // Map QueueItem to SearchResult structure to prefill the modal
+    const prefilledData: SearchResult = {
+      title: item.title,
+      year: item.year,
+      director: 'Unknown', // QueueItems don't have this, user can fetch or leave it
+      actors: 'Unknown',
+      plot: '請使用搜尋功能更新詳細資訊...',
+      posterUrl: item.posterUrl
+    };
+
+    setSelectedMovieToAdd(prefilledData);
+    setQueueItemToPromote(item.id);
+    setModalSearchTerm(item.title); // Prefill search term if they want to re-search
+    setModalMode('add_history');
+    setIsModalOpen(true);
   };
 
   // Helper: Get Average Rating
@@ -178,7 +200,8 @@ export default function App() {
       setIsEditingPoster(false);
   };
 
-  const handleDeleteMovie = (movieId: string) => {
+  const handleDeleteMovie = (movieId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     if (window.confirm('確定要刪除這部電影紀錄嗎？此操作無法復原。')) {
       setMovies(prev => prev.filter(m => m.id !== movieId));
       setViewingMovie(null);
@@ -208,15 +231,21 @@ export default function App() {
         id: Date.now().toString(),
         title: selectedMovieToAdd.title,
         year: selectedMovieToAdd.year,
-        director: selectedMovieToAdd.director,
+        director: selectedMovieToAdd.director || 'Unknown',
         actors: selectedMovieToAdd.actors || 'Unknown',
-        plot: selectedMovieToAdd.plot,
+        plot: selectedMovieToAdd.plot || '無劇情簡介',
         posterUrl: customPoster || selectedMovieToAdd.posterUrl,
         ratings: [{ user: userName, score: userRating }],
         dateWatched: userDate,
         addedBy: userName
       };
       setMovies([newMovie, ...movies]);
+
+      // If this was promoted from queue, remove it from queue
+      if (queueItemToPromote) {
+        setQueue(prev => prev.filter(q => q.id !== queueItemToPromote));
+      }
+
     } else {
       const newQueueItem: QueueItem = {
         id: Date.now().toString(),
@@ -239,6 +268,7 @@ export default function App() {
     setSelectedMovieToAdd(null);
     setUserRating(0);
     setCustomPoster('');
+    setQueueItemToPromote(null);
   };
 
   const handleChangePoster = async () => {
@@ -376,7 +406,12 @@ export default function App() {
             ) : (
               <div className="max-w-4xl">
                 {queue.map(item => (
-                  <QueueCard key={item.id} item={item} onVote={handleVote} />
+                  <QueueCard 
+                    key={item.id} 
+                    item={item} 
+                    onVote={handleVote}
+                    onPromote={handlePromoteFromQueue} 
+                  />
                 ))}
                 {queue.length === 0 && (
                   <div className="text-center py-20 glass rounded-2xl border-dashed border-white/10">
@@ -480,6 +515,9 @@ export default function App() {
                     <div>
                       <h2 className="text-2xl font-bold text-white leading-tight whitespace-pre-wrap">{selectedMovieToAdd.title}</h2>
                       <p className="text-brand-muted text-sm mt-1">{selectedMovieToAdd.year} • {selectedMovieToAdd.director}</p>
+                      {selectedMovieToAdd.plot === '請使用搜尋功能更新詳細資訊...' && (
+                          <p className="text-amber-500 text-xs mt-2">*此項目來自待看清單，建議點擊下方「返回搜尋」以獲取完整電影資訊(演員、簡介)</p>
+                      )}
                     </div>
                     
                     <div className="space-y-4 pt-2">
@@ -543,12 +581,24 @@ export default function App() {
           <div className="absolute inset-0 bg-black/80 backdrop-blur-lg" onClick={() => setViewingMovie(null)} />
           <div className="glass-strong w-full max-w-4xl rounded-3xl shadow-2xl relative overflow-hidden flex flex-col md:flex-row max-h-[90vh] animate-fadeIn border border-white/10">
             
-            <button 
-              onClick={() => setViewingMovie(null)}
-              className="absolute top-4 right-4 z-20 bg-black/40 hover:bg-black/60 text-white p-2 rounded-full backdrop-blur-sm transition-colors"
-            >
-              <CloseIcon />
-            </button>
+            {/* Header Actions (Close & Delete) */}
+            <div className="absolute top-4 right-4 z-20 flex space-x-2">
+                {/* Delete Button (Moved here for better access) */}
+                <button
+                    onClick={(e) => handleDeleteMovie(viewingMovie.id, e)}
+                    className="bg-black/40 hover:bg-red-500/80 text-white hover:text-white p-2 rounded-full backdrop-blur-sm transition-colors group"
+                    title="刪除紀錄"
+                >
+                    <TrashIcon />
+                </button>
+                {/* Close Button */}
+                <button 
+                  onClick={() => setViewingMovie(null)}
+                  className="bg-black/40 hover:bg-black/60 text-white p-2 rounded-full backdrop-blur-sm transition-colors"
+                >
+                  <CloseIcon />
+                </button>
+            </div>
 
             {/* Poster Section */}
             <div className="w-full md:w-2/5 relative min-h-[300px] bg-black/50">
@@ -595,7 +645,7 @@ export default function App() {
 
             {/* Info Section */}
             <div className="w-full md:w-3/5 p-8 flex flex-col overflow-y-auto bg-black/40 custom-scrollbar">
-              <div className="mb-6">
+              <div className="mb-6 mr-16"> {/* MR for close button safety */}
                 <h2 className="text-3xl md:text-4xl font-bold text-white mb-2 leading-tight whitespace-pre-wrap">{viewingMovie.title}</h2>
                 <div className="flex flex-wrap items-center gap-3 text-brand-muted text-sm">
                   <span className="bg-white/10 px-2 py-0.5 rounded text-gray-300">{viewingMovie.year}</span>
@@ -687,17 +737,6 @@ export default function App() {
                         </div>
                     </div>
                 </div>
-              </div>
-              
-              {/* Delete Button */}
-              <div className="mt-6 flex justify-end border-t border-white/5 pt-4">
-                <button
-                    onClick={() => handleDeleteMovie(viewingMovie.id)}
-                    className="flex items-center text-xs text-red-500/50 hover:text-red-500 hover:bg-red-500/10 px-3 py-1.5 rounded transition-all"
-                >
-                    <TrashIcon />
-                    <span className="ml-1">刪除紀錄</span>
-                </button>
               </div>
             </div>
           </div>

@@ -4,11 +4,12 @@ import { QueueItem } from '../types';
 interface QueueCardProps {
   item: QueueItem;
   onVote: (id: string, type: 'up' | 'down') => void;
+  onPromote: (item: QueueItem) => void;
 }
 
-const QueueCard: React.FC<QueueCardProps> = ({ item, onVote }) => {
+const QueueCard: React.FC<QueueCardProps> = ({ item, onVote, onPromote }) => {
   return (
-    <div className="flex items-center glass-card rounded-xl p-4 mb-3 hover:bg-white/5 transition-colors group">
+    <div className="flex items-center glass-card rounded-xl p-4 mb-3 hover:bg-white/5 transition-colors group relative overflow-hidden">
       <div className="w-16 h-24 flex-shrink-0 overflow-hidden rounded-lg shadow-lg">
         <img 
           src={item.posterUrl} 
@@ -17,7 +18,7 @@ const QueueCard: React.FC<QueueCardProps> = ({ item, onVote }) => {
         />
       </div>
       
-      <div className="ml-5 flex-grow min-w-0">
+      <div className="ml-5 flex-grow min-w-0 pr-12">
         <h4 className="text-white font-bold text-lg leading-tight line-clamp-2 whitespace-pre-wrap">{item.title}</h4>
         <div className="flex items-center mt-1 space-x-2">
           <span className="text-xs bg-white/10 px-2 py-0.5 rounded text-gray-300">{item.year}</span>
@@ -25,6 +26,7 @@ const QueueCard: React.FC<QueueCardProps> = ({ item, onVote }) => {
         </div>
       </div>
       
+      {/* Voting Section */}
       <div className="flex flex-col items-center justify-center ml-4 space-y-2 bg-black/20 p-2 rounded-lg border border-white/5">
         <button 
           onClick={() => onVote(item.id, 'up')}
@@ -52,6 +54,17 @@ const QueueCard: React.FC<QueueCardProps> = ({ item, onVote }) => {
           </svg>
         </button>
       </div>
+
+      {/* Mark as Watched Button (Absolute Positioned for cleaner look) */}
+      <button
+        onClick={() => onPromote(item)}
+        className="absolute bottom-4 right-20 md:static md:bottom-auto md:right-auto md:ml-4 bg-brand-accent/10 hover:bg-brand-accent text-brand-accent hover:text-brand-dark p-2 rounded-full transition-all duration-300 shadow-[0_0_15px_rgba(16,185,129,0.1)] hover:shadow-[0_0_20px_rgba(16,185,129,0.4)]"
+        title="記錄為已觀看 (移出待看列表)"
+      >
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+        </svg>
+      </button>
     </div>
   );
 };
