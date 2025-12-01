@@ -1,0 +1,5 @@
+{
+  "name": "CineLog",
+  "description": "A collaborative movie tracking and proposal dashboard for friends, featuring AI-powered movie data fetching and a cinematic dark UI.",
+  "requestFramePermissions": []
+}
